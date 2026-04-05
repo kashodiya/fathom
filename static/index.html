@@ -370,16 +370,18 @@ const ResearchView = {
         if (!srcMap[i + 1]) srcMap[i + 1] = { url: s.url, title: s.title || s.url };
       });
       let md = research.value.report
-        .replace(/\|\s*ID\s*\|\s*Title\s*\|\s*URL\s*\|/gi, '| # | Source |')
-        .replace(/^\|[-: ]+\|[-: ]+\|[-: ]+\|$/gm, '|---|---|')
+        // Normalize sources table header (handles "Source ID", "ID", etc.)
+        .replace(/\|[^|\n]*\bID\b[^|\n]*\|[^|\n]*Title[^|\n]*\|[^|\n]*URL[^|\n]*\|/gi, '| # | Title | URL |')
+        // Transform source rows: [src-N] → linked number, URL cell → linked arrow
         .replace(
           /\|\s*\[src-(\d+)\]\s*\|([^|\n]+)\|([^|\n]+)\|/g,
           (match, n, titleCell, urlCell) => {
             const src = srcMap[parseInt(n)];
             const url = src ? src.url : urlCell.trim();
-            return `| ${n} | <a href="${url}" target="_blank" class="src-link">${titleCell.trim()}</a> |`;
+            return `| [${n}](${url}) | ${titleCell.trim()} | [↗](${url}) |`;
           }
         )
+        // Inline citations in body text
         .replace(/\[src-(\d+)\]/g, (match, n) => {
           const src = srcMap[parseInt(n)];
           if (src) return `<a href="${src.url}" target="_blank" title="${src.title}" class="src-link">[${n}]</a>`;
