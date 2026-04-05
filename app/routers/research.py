@@ -19,7 +19,7 @@ def slugify(text: str) -> str:
     return text[:60]
 
 
-def init_research_repo(folder: str, topic: str):
+def init_research_repo(folder: str, brief: str):
     os.makedirs(folder, exist_ok=True)
     os.makedirs(os.path.join(folder, "sources"), exist_ok=True)
     repo = git.Repo.init(folder)
@@ -27,12 +27,12 @@ def init_research_repo(folder: str, topic: str):
     with open(gitignore, "w") as f:
         f.write("*.tmp\n")
     repo.index.add([".gitignore"])
-    repo.index.commit(f"Init: {topic}")
+    repo.index.commit(f"Init: {brief}")
     return repo
 
 
 class ResearchCreate(BaseModel):
-    topic: str
+    brief: str
     sources_config: str = "both"   # "web", "youtube", "both"
     parallelism: int = 1
     seed_urls: list[str] = []
@@ -40,32 +40,32 @@ class ResearchCreate(BaseModel):
 
 @router.post("")
 async def create_research(body: ResearchCreate, background_tasks: BackgroundTasks, db=Depends(get_db)):
-    slug = slugify(body.topic)
+    slug = slugify(body.brief)
     folder = os.path.join(RESEARCH_DIR, slug)
     if os.path.exists(folder):
         raise HTTPException(400, f"Research '{slug}' already exists")
 
     import json as _json
     async with db.execute(
-        "INSERT INTO research (slug, topic, sources_config, parallelism, seed_urls) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        (slug, body.topic, body.sources_config, body.parallelism, _json.dumps(body.seed_urls)),
+        "INSERT INTO research (slug, brief, sources_config, parallelism, seed_urls) VALUES (?, ?, ?, ?, ?) RETURNING id",
+        (slug, body.brief, body.sources_config, body.parallelism, _json.dumps(body.seed_urls)),
     ) as cur:
         row = await cur.fetchone()
     await db.commit()
     research_id = row[0]
 
-    init_research_repo(folder, body.topic)
+    init_research_repo(folder, body.brief)
 
     # Start agent in background
-    background_tasks.add_task(run_agent, research_id, slug, body.topic, body.sources_config)
+    background_tasks.add_task(run_agent, research_id, slug, body.brief, body.sources_config)
 
-    return {"id": research_id, "slug": slug, "topic": body.topic, "status": "pending"}
+    return {"id": research_id, "slug": slug, "brief": body.brief, "status": "pending"}
 
 
 @router.get("")
 async def list_research(db=Depends(get_db)):
     async with db.execute(
-        "SELECT id, slug, topic, status, sources_config, parallelism, created_at, updated_at FROM research ORDER BY created_at DESC"
+        "SELECT id, slug, brief, status, sources_config, parallelism, created_at, updated_at FROM research ORDER BY created_at DESC"
     ) as cur:
         rows = await cur.fetchall()
     return [dict(r) for r in rows]
@@ -142,7 +142,7 @@ async def stop_research(slug: str, db=Depends(get_db)):
 
 @router.post("/{slug}/refresh")
 async def refresh_research(slug: str, body: RefreshRequest, background_tasks: BackgroundTasks, db=Depends(get_db)):
-    async with db.execute("SELECT id, topic, sources_config, status FROM research WHERE slug = ?", (slug,)) as cur:
+    async with db.execute("SELECT id, brief, sources_config, status FROM research WHERE slug = ?", (slug,)) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(404, "Research not found")
@@ -158,7 +158,7 @@ async def refresh_research(slug: str, body: RefreshRequest, background_tasks: Ba
 
     background_tasks.add_task(
         run_agent_refresh,
-        row["id"], slug, row["topic"], row["sources_config"], aspect,
+        row["id"], slug, row["brief"], row["sources_config"], aspect,
     )
     return {"slug": slug, "status": "pending", "aspect": aspect}
 
@@ -199,17 +199,40 @@ async def get_diff(slug: str, commit_hash: str):
         raise HTTPException(500, str(e))
 
 
+def _resolve_sources(content: str, src_map: dict) -> str:
+    """Replace [src-N] tags with markdown links using a {id: {url, title}} map."""
+    import re as _re
+    def replace_inline(m):
+        src = src_map.get(int(m.group(1)))
+        if src:
+            return f"[{m.group(1)}]({src['url']})"
+        return m.group(0)
+    content = _re.sub(r'\[src-(\d+)\]', replace_inline, content)
+    # Make bare URLs in table cells clickable
+    content = _re.sub(r'(\|\s*)(https?://[^\s|]+)(\s*\|)', lambda m: f"{m.group(1)}[{m.group(2)}]({m.group(2)}){m.group(3)}", content)
+    return content
+
+
 @router.get("/{slug}/export")
-async def export_research(slug: str, format: str = "md"):
+async def export_research(slug: str, format: str = "md", db=Depends(get_db)):
     report_path = os.path.join(RESEARCH_DIR, slug, "report.md")
     if not os.path.exists(report_path):
         raise HTTPException(404, "Report not found")
 
     content = open(report_path, encoding="utf-8").read()
 
+    # Build source map for link resolution
+    async with db.execute("SELECT id FROM research WHERE slug = ?", (slug,)) as cur:
+        row = await cur.fetchone()
+    src_map = {}
+    if row:
+        async with db.execute("SELECT id, url, title FROM sources WHERE research_id = ?", (row["id"],)) as cur:
+            for s in await cur.fetchall():
+                src_map[s["id"]] = {"url": s["url"], "title": s["title"] or s["url"]}
+
     if format == "md":
         return Response(
-            content,
+            _resolve_sources(content, src_map),
             media_type="text/markdown",
             headers={"Content-Disposition": f'attachment; filename="{slug}.md"'},
         )
@@ -231,7 +254,7 @@ async def export_research(slug: str, format: str = "md"):
 
     if format == "pdf":
         try:
-            pdf_bytes = await _generate_pdf(content, slug)
+            pdf_bytes = await _generate_pdf(_resolve_sources(content, src_map), slug)
             return Response(
                 pdf_bytes,
                 media_type="application/pdf",
@@ -254,9 +277,10 @@ def _generate_pdf_sync(report_md: str) -> bytes:
   h1 {{ font-size: 1.8em; border-bottom: 2px solid #333; padding-bottom: 8px; }}
   h2 {{ font-size: 1.4em; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 2em; }}
   h3 {{ font-size: 1.1em; margin-top: 1.5em; }}
-  table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
-  th, td {{ border: 1px solid #ddd; padding: 8px 12px; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 1em 0; table-layout: fixed; }}
+  th, td {{ border: 1px solid #ddd; padding: 8px 12px; word-break: break-word; overflow-wrap: break-word; }}
   th {{ background: #f5f5f5; }}
+  td:first-child, th:first-child {{ width: 80px; text-align: center; }}
   code {{ background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-size: 0.9em; }}
   a {{ color: #1565c0; }}
   hr {{ border: none; border-top: 1px solid #eee; margin: 1.5em 0; }}

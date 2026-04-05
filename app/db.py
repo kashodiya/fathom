@@ -20,7 +20,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS research (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 slug        TEXT    NOT NULL UNIQUE,
-                topic       TEXT    NOT NULL,
+                brief       TEXT    NOT NULL,
                 status      TEXT    NOT NULL DEFAULT 'pending',
                 sources_config TEXT NOT NULL DEFAULT 'both',
                 parallelism INTEGER NOT NULL DEFAULT 1,
@@ -62,6 +62,7 @@ async def init_db():
         for migration in [
             "ALTER TABLE research ADD COLUMN refresh_aspect TEXT",
             "ALTER TABLE research ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE research RENAME COLUMN topic TO brief",
         ]:
             try:
                 await db.execute(migration)

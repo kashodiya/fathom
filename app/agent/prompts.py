@@ -43,7 +43,7 @@ Write the report in Markdown with these sections:
 """
 
 
-def get_refresh_user_message(topic: str, source_instructions: str, previous_report: str, aspect: str | None) -> str:
+def get_refresh_user_message(brief: str, source_instructions: str, previous_report: str, aspect: str | None) -> str:
     today = date.today().strftime("%B %d, %Y")
     if aspect:
         task = f"""This is a **partial refresh**. Update ONLY the following aspect of the report:
@@ -59,7 +59,7 @@ Leave all other sections of the report unchanged. Search specifically for recent
 
     return f"""## Research Brief
 
-{topic}
+{brief}
 
 ## Task
 

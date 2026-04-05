@@ -245,7 +245,7 @@ def _source_instructions(sources_config: str) -> str:
     }.get(sources_config, "Use all available tools.")
 
 
-async def _run_loop(research_id: int, slug: str, topic: str, messages: list, is_refresh: bool, aspect: str | None):
+async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_refresh: bool, aspect: str | None):
     """Shared Bedrock agent loop. Called by both run_agent and run_agent_refresh."""
     bedrock = get_bedrock_client()
     sources = []
@@ -284,7 +284,7 @@ async def _run_loop(research_id: int, slug: str, topic: str, messages: list, is_
             if text:
                 write_report_file(slug, text)
                 label = f"Refresh {date.today()}" if is_refresh else f"Research complete"
-                git_commit(slug, f"{label}: {topic[:60]}")
+                git_commit(slug, f"{label}: {brief[:60]}")
                 logger.info("[agent] report written (end_turn fallback)")
             break
 
@@ -297,7 +297,7 @@ async def _run_loop(research_id: int, slug: str, topic: str, messages: list, is_
             text = "\n\n".join(b["text"] for b in output_message["content"] if "text" in b)
             if text:
                 write_report_file(slug, text)
-                git_commit(slug, f"Research complete (max_tokens): {topic[:60]}")
+                git_commit(slug, f"Research complete (max_tokens): {brief[:60]}")
             await db_update_research_status(research_id, "done")
             return
 
@@ -338,7 +338,7 @@ async def _run_loop(research_id: int, slug: str, topic: str, messages: list, is_
                 aspect_label = f"partial: {aspect[:40]}" if aspect else "full refresh"
                 commit_msg = f"Refresh {date.today()} ({aspect_label})\n\n{commit_summary}" if commit_summary else f"Refresh {date.today()} ({aspect_label})"
             else:
-                commit_msg = f"Research complete: {topic[:60]}\n\n{len(sources)} sources collected."
+                commit_msg = f"Research complete: {brief[:60]}\n\n{len(sources)} sources collected."
             git_commit(slug, commit_msg)
             logger.info(f"[agent] research complete. {len(sources)} sources.")
             await db_update_research_status(research_id, "done")
@@ -347,14 +347,14 @@ async def _run_loop(research_id: int, slug: str, topic: str, messages: list, is_
         # Check for stop request between iterations
         if await db_is_stop_requested(research_id):
             logger.info(f"[agent] stop requested for research {research_id} — forcing synthesis")
-            await _force_synthesis(bedrock, research_id, slug, topic, messages, sources, reason="stopped")
+            await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="stopped")
             return
 
     logger.warning(f"[agent] max iterations reached for research {research_id} — forcing final synthesis")
-    await _force_synthesis(bedrock, research_id, slug, topic, messages, sources, reason="max_iterations")
+    await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="max_iterations")
 
 
-async def _force_synthesis(bedrock, research_id: int, slug: str, topic: str, messages: list, sources: list, reason: str):
+async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, messages: list, sources: list, reason: str):
     """Force a final Bedrock call to write a report from whatever has been gathered."""
     note = "stopped by user" if reason == "stopped" else "max iterations reached"
     prompt = (
@@ -379,14 +379,14 @@ async def _force_synthesis(bedrock, research_id: int, slug: str, topic: str, mes
         for block in output_message["content"]:
             if "toolUse" in block and block["toolUse"]["name"] == "write_report":
                 write_report_file(slug, block["toolUse"]["input"].get("content", ""))
-                git_commit(slug, f"Research complete ({reason}): {topic[:60]}\n\n{len(sources)} sources collected.")
+                git_commit(slug, f"Research complete ({reason}): {brief[:60]}\n\n{len(sources)} sources collected.")
                 logger.info(f"[agent] forced synthesis report written ({reason})")
                 break
         else:
             text = "\n\n".join(b["text"] for b in output_message["content"] if "text" in b)
             if text:
                 write_report_file(slug, text)
-                git_commit(slug, f"Research complete (fallback): {topic[:60]}")
+                git_commit(slug, f"Research complete (fallback): {brief[:60]}")
                 logger.info("[agent] fallback text report written")
     except Exception as e:
         logger.error(f"[agent] forced synthesis error: {e}")
@@ -394,38 +394,41 @@ async def _force_synthesis(bedrock, research_id: int, slug: str, topic: str, mes
     await db_update_research_status(research_id, "done")
 
 
-async def run_agent(research_id: int, slug: str, topic: str, sources_config: str):
-    logger.info(f"[agent] starting research: '{topic}' (id={research_id})")
+async def run_agent(research_id: int, slug: str, brief: str, sources_config: str):
+    logger.info(f"[agent] starting research: '{brief}' (id={research_id})")
     await db_clear_stop_flag(research_id)
     await db_update_research_status(research_id, "running")
     src_instr = _source_instructions(sources_config)
-    messages = [{"role": "user", "content": [{"text": f"## Research Brief\n\n{topic}\n\n## Sources\n{src_instr}\n\nPlan your searches based on this brief and begin research now."}]}]
-    await _run_loop(research_id, slug, topic, messages, is_refresh=False, aspect=None)
+    messages = [{"role": "user", "content": [{"text": f"## Research Brief\n\n{brief}\n\n## Sources\n{src_instr}\n\nPlan your searches based on this brief and begin research now."}]}]
+    await _run_loop(research_id, slug, brief, messages, is_refresh=False, aspect=None)
 
 
-async def run_agent_refresh(research_id: int, slug: str, topic: str, sources_config: str, aspect: str | None = None):
-    logger.info(f"[agent] refreshing research: '{topic}' (id={research_id}, aspect={aspect!r})")
+async def run_agent_refresh(research_id: int, slug: str, brief: str, sources_config: str, aspect: str | None = None):
+    logger.info(f"[agent] refreshing research: '{brief}' (id={research_id}, aspect={aspect!r})")
 
     # Read previous report
     report_path = os.path.join(research_folder(slug), "report.md")
     previous_report = open(report_path, encoding="utf-8").read() if os.path.exists(report_path) else ""
 
-    # Clear old sources from DB and source files
+    # Full refresh: wipe old sources so the report is built fresh.
+    # Partial refresh: keep existing sources — the agent only adds new ones for the specified aspect.
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM sources WHERE research_id = ?", (research_id,))
         await db.execute("DELETE FROM jobs WHERE research_id = ? AND status != 'running'", (research_id,))
+        if not aspect:
+            await db.execute("DELETE FROM sources WHERE research_id = ?", (research_id,))
         await db.commit()
 
-    sources_dir = os.path.join(research_folder(slug), "sources")
-    if os.path.exists(sources_dir):
-        import shutil
-        shutil.rmtree(sources_dir)
-        os.makedirs(sources_dir)
+    if not aspect:
+        sources_dir = os.path.join(research_folder(slug), "sources")
+        if os.path.exists(sources_dir):
+            import shutil
+            shutil.rmtree(sources_dir)
+            os.makedirs(sources_dir)
 
     await db_clear_stop_flag(research_id)
     await db_update_research_status(research_id, "running")
 
     src_instr = _source_instructions(sources_config)
-    user_msg  = get_refresh_user_message(topic, src_instr, previous_report, aspect)
+    user_msg  = get_refresh_user_message(brief, src_instr, previous_report, aspect)
     messages  = [{"role": "user", "content": [{"text": user_msg}]}]
-    await _run_loop(research_id, slug, topic, messages, is_refresh=True, aspect=aspect)
+    await _run_loop(research_id, slug, brief, messages, is_refresh=True, aspect=aspect)
