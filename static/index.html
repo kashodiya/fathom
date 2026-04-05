@@ -331,21 +331,6 @@ const ResearchView = {
       </v-card>
     </v-dialog>
 
-    <!-- Diff dialog -->
-    <v-dialog v-model="diffDialog" max-width="900" scrollable>
-      <v-card>
-        <v-card-title class="d-flex align-center">
-          <span class="text-body-1">{{ diffCommit.message?.split('\\n')[0] }}</span>
-          <v-spacer/>
-          <v-btn icon="mdi-close" variant="text" @click="diffDialog=false"/>
-        </v-card-title>
-        <v-divider/>
-        <v-card-text style="max-height:70vh;overflow-y:auto">
-          <div v-if="diffCommit.message && diffCommit.message.includes('\\n')" class="text-caption text-grey mb-3 pa-2" style="white-space:pre-wrap;background:#f5f5f5;border-radius:4px">{{ diffCommit.message }}</div>
-          <div v-html="renderedDiff" class="diff-container"/>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
   </v-container>`,
   setup() {
     const route  = VueRouter.useRoute();
@@ -373,9 +358,7 @@ const ResearchView = {
     const refreshing    = ref(false);
 
     // Diff
-    const diffDialog  = ref(false);
-    const diffCommit  = ref({ message:'', diff:'' });
-    const renderedDiff = ref('');
+
 
     const renderedReport = computed(() => {
       if (!research.value.report) return '';
@@ -441,11 +424,21 @@ const ResearchView = {
 
     async function viewDiff(hash) {
       const data = await api.get(`/research/${slug}/history/${hash}`);
-      diffCommit.value = data;
-      renderedDiff.value = data.diff
+      const rendered = data.diff
         ? Diff2Html.html(data.diff, { drawFileList: false, matching: 'lines', outputFormat: 'side-by-side' })
-        : '<p class="text-grey">No changes in this commit.</p>';
-      diffDialog.value = true;
+        : '<p style="color:#888">No changes in this commit.</p>';
+      const title = (data.message || '').split('\n')[0];
+      const fullMsg = data.message || '';
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css"/>
+<style>body{font-family:sans-serif;margin:24px;} h2{margin-bottom:4px;} pre{background:#f5f5f5;padding:10px;border-radius:4px;white-space:pre-wrap;font-size:13px;}</style>
+</head><body>
+<h2>${title}</h2>
+${fullMsg.includes('\n') ? `<pre>${fullMsg}</pre>` : ''}
+${rendered}
+</body></html>`;
+      const blob = new Blob([html], { type: 'text/html' });
+      window.open(URL.createObjectURL(blob), '_blank');
     }
 
     function exportAs(format) {
@@ -465,7 +458,7 @@ const ResearchView = {
       statusColor, jobInfo, jobLabel, formatDate,
       stopping, stopResearch,
       refreshDialog, refreshAspect, refreshing, doRefresh,
-      diffDialog, diffCommit, renderedDiff, viewDiff,
+      viewDiff,
       exportAs, deleteResearch };
   }
 };
