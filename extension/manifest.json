@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "AI Research Agent",
+  "version": "0.1.0",
+  "description": "Stealth scraping hands for the AI Research Agent",
+
+  "permissions": [
+    "tabs",
+    "scripting",
+    "alarms"
+  ],
+
+  "host_permissions": [
+    "http://localhost/*",
+    "https://www.youtube.com/*",
+    "https://www.google.com/*",
+    "https://*/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  }
+}

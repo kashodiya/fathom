@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+aiosqlite
+gitpython
+crawl4ai
+boto3
+weasyprint
+python-multipart

@@ -1,0 +1,35 @@
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Research (local only - move to research-public/ to share on GitHub)
+research/
+!research/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+temp.md
