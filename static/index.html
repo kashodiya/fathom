@@ -533,7 +533,10 @@ const ResearchView = {
       jobs.value     = j;
       sources.value  = s;
       if (s.length && !autoSwitched) { tab.value = 'sources'; autoSwitched = true; }
-      if (r.status === 'done' || r.status === 'failed') clearInterval(timer);
+      if (r.status === 'done' || r.status === 'failed') {
+        clearInterval(timer);
+        loadHistory();
+      }
     }
 
     async function loadHistory() {
