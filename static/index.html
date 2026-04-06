@@ -388,29 +388,30 @@ const ResearchView = {
 
     const renderedReport = computed(() => {
       if (!research.value.report) return '';
-      // Primary map: by DB id (e.g. [src-42]). Fallback map: by 1-based position for
-      // older reports where the agent used sequential numbering instead of DB ids.
+      // Build maps keyed by DB id. pos is 1-based sequential position for display.
       const srcMap = {};
+      const posMap = {}; // dbId → sequential position (1, 2, 3...)
       sources.value.forEach((s, i) => {
         srcMap[s.id] = { url: s.url, title: s.title || s.url };
-        if (!srcMap[i + 1]) srcMap[i + 1] = { url: s.url, title: s.title || s.url };
+        posMap[s.id] = i + 1;
       });
+      const displayNum = n => posMap[parseInt(n)] ?? parseInt(n);
       let md = research.value.report
         // Normalize sources table header (handles "Source ID", "ID", etc.)
         .replace(/\|[^|\n]*\bID\b[^|\n]*\|[^|\n]*Title[^|\n]*\|[^|\n]*URL[^|\n]*\|/gi, '| # | Title | URL |')
-        // Transform source rows: [src-N] → linked number, URL cell → linked arrow
+        // Transform source rows: [src-N] → sequential linked number, URL cell → linked arrow
         .replace(
           /\|\s*\[src-(\d+)\]\s*\|([^|\n]+)\|([^|\n]+)\|/g,
           (match, n, titleCell, urlCell) => {
             const src = srcMap[parseInt(n)];
             const url = src ? src.url : urlCell.trim();
-            return `| [${n}](${url}) | ${titleCell.trim()} | [↗](${url}) |`;
+            return `| [${displayNum(n)}](${url}) | ${titleCell.trim()} | [↗](${url}) |`;
           }
         )
         // Inline citations in body text
         .replace(/\[src-(\d+)\]/g, (match, n) => {
           const src = srcMap[parseInt(n)];
-          if (src) return `<a href="${src.url}" target="_blank" title="${src.title}" class="src-link">[${n}]</a>`;
+          if (src) return `<a href="${src.url}" target="_blank" class="src-link">[${displayNum(n)}]</a>`;
           return match;
         });
       return marked.parse(md);
