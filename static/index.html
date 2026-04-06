@@ -275,6 +275,9 @@ const ResearchView = {
               <v-icon size="small" class="mr-1">mdi-book-open-outline</v-icon>Sources
               <v-badge v-if="sources.length" :content="sources.length" color="teal" inline/>
             </v-tab>
+            <v-tab value="stats">
+              <v-icon size="small" class="mr-1">mdi-chart-bar</v-icon>Stats
+            </v-tab>
             <v-tab value="history">
               <v-icon size="small" class="mr-1">mdi-history</v-icon>History
             </v-tab>
@@ -293,6 +296,7 @@ const ResearchView = {
                   <v-list-item-title class="text-caption text-wrap">{{ jobLabel(job) }}</v-list-item-title>
                   <v-list-item-subtitle class="text-caption">{{ jobInfo(job.type).label }}</v-list-item-subtitle>
                   <template #append>
+                    <span v-if="jobDuration(job)" class="text-caption text-grey mr-1">{{ jobDuration(job) }}</span>
                     <v-chip size="x-small" :color="statusColor(job.status)">{{ job.status }}</v-chip>
                   </template>
                 </v-list-item>
@@ -315,6 +319,45 @@ const ResearchView = {
                   <v-list-item-subtitle class="text-caption">{{ src.scraped_at }}</v-list-item-subtitle>
                 </v-list-item>
               </v-list>
+            </v-window-item>
+
+            <!-- Stats tab -->
+            <v-window-item value="stats">
+              <div style="max-height:70vh;overflow-y:auto" class="pa-2">
+                <div v-if="!jobStats.length" class="text-grey text-center pa-4">No data yet</div>
+                <table v-else style="width:100%;border-collapse:collapse;font-size:12px">
+                  <thead>
+                    <tr style="border-bottom:1px solid #ddd">
+                      <th style="text-align:left;padding:4px 6px">Type</th>
+                      <th style="text-align:right;padding:4px 6px">Count</th>
+                      <th style="text-align:right;padding:4px 6px">Avg</th>
+                      <th style="text-align:right;padding:4px 6px">Total</th>
+                      <th style="text-align:right;padding:4px 6px">Failed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="s in jobStats" :key="s.type" style="border-bottom:1px solid #f0f0f0">
+                      <td style="padding:4px 6px">
+                        <v-icon :color="jobInfo(s.type).color" size="x-small" class="mr-1">{{ jobInfo(s.type).icon }}</v-icon>
+                        {{ jobInfo(s.type).label }}
+                      </td>
+                      <td style="text-align:right;padding:4px 6px">{{ s.count }}</td>
+                      <td style="text-align:right;padding:4px 6px">{{ s.avg }}</td>
+                      <td style="text-align:right;padding:4px 6px">{{ s.total }}</td>
+                      <td style="text-align:right;padding:4px 6px" :style="s.failed>0?'color:red':''">{{ s.failed || '' }}</td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr style="border-top:2px solid #ddd;font-weight:bold">
+                      <td style="padding:4px 6px">Total</td>
+                      <td style="text-align:right;padding:4px 6px">{{ jobStats.reduce((a,s)=>a+s.count,0) }}</td>
+                      <td></td>
+                      <td style="text-align:right;padding:4px 6px">{{ formatSecs(jobStats.reduce((a,s)=>a+s.totalSecs,0)) }}</td>
+                      <td style="text-align:right;padding:4px 6px">{{ jobStats.reduce((a,s)=>a+s.failed,0) || '' }}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </v-window-item>
 
             <!-- History tab -->
@@ -421,6 +464,46 @@ const ResearchView = {
     const jobInfo      = t => JOB_ICONS[t] || { icon:'mdi-cog', color:'grey', label:t };
     const formatDate   = d => d ? new Date(d).toLocaleString() : '';
 
+    function formatSecs(secs) {
+      if (secs == null || isNaN(secs)) return '';
+      if (secs < 60) return secs.toFixed(1) + 's';
+      return Math.floor(secs / 60) + 'm ' + (secs % 60).toFixed(0) + 's';
+    }
+
+    const now = ref(Date.now());
+    setInterval(() => { now.value = Date.now(); }, 1000);
+
+    function jobDuration(job) {
+      if (job.status === 'done' || job.status === 'failed') {
+        const secs = (new Date(job.updated_at) - new Date(job.created_at)) / 1000;
+        return formatSecs(secs);
+      }
+      if (job.status === 'running' || job.status === 'pending') {
+        const secs = (now.value - new Date(job.created_at)) / 1000;
+        return formatSecs(secs) + '…';
+      }
+      return '';
+    }
+
+    const jobStats = computed(() => {
+      const map = {};
+      for (const job of jobs.value) {
+        if (!map[job.type]) map[job.type] = { type: job.type, count: 0, totalSecs: 0, failed: 0, doneSecs: [] };
+        map[job.type].count++;
+        if (job.status === 'failed') map[job.type].failed++;
+        if (job.status === 'done' || job.status === 'failed') {
+          const secs = (new Date(job.updated_at) - new Date(job.created_at)) / 1000;
+          map[job.type].totalSecs += secs;
+          map[job.type].doneSecs.push(secs);
+        }
+      }
+      return Object.values(map).map(s => ({
+        ...s,
+        avg: s.doneSecs.length ? formatSecs(s.totalSecs / s.doneSecs.length) : '-',
+        total: formatSecs(s.totalSecs),
+      }));
+    });
+
     async function load() {
       const [r, j, s] = await Promise.all([
         api.get(`/research/${slug}`),
@@ -484,7 +567,7 @@ ${rendered}
     onUnmounted(() => clearInterval(timer));
 
     return { research, jobs, sources, history, tab, renderedReport,
-      statusColor, jobInfo, jobLabel, formatDate,
+      statusColor, jobInfo, jobLabel, formatDate, formatSecs, jobDuration, jobStats,
       stopping, stopResearch,
       refreshDialog, refreshAspect, refreshing, doRefresh,
       viewDiff,

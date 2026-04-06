@@ -12,6 +12,8 @@ def _scrape_sync(url: str) -> dict:
             word_count_threshold=10,
             exclude_external_links=False,
             remove_overlay_elements=True,
+            wait_until="domcontentloaded",
+            page_timeout=20000,  # 20s max per page
         )
         async with AsyncWebCrawler() as crawler:
             result = await crawler.arun(url=url, config=config)

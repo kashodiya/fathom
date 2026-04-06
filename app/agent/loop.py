@@ -202,7 +202,12 @@ async def execute_tool(name: str, inputs: dict, research_id: int, slug: str, sou
 
     elif name == "scrape_page":
         job_id = await db_create_job(research_id, "scrape_page", inputs)
-        result = await scrape_page(inputs["url"])
+        try:
+            result = await asyncio.wait_for(scrape_page(inputs["url"]), timeout=30)
+        except asyncio.TimeoutError:
+            await db_update_job(job_id, "failed", {"error": "timeout"})
+            logger.warning(f"scrape_page timeout: {inputs['url']}")
+            return json.dumps({"error": "scrape timed out"})
         if result.get("error") or not result.get("content"):
             await db_update_job(job_id, "failed", {"error": result.get("error", "empty content")})
             return json.dumps({"error": result.get("error", "empty content")})
