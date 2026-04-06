@@ -1,8 +1,27 @@
 from datetime import date
 
 
-def get_system_prompt() -> str:
+def get_system_prompt(template: str = "") -> str:
     today = date.today().strftime("%B %d, %Y")
+
+    if template.strip():
+        report_format = f"""## Report Format
+The user has provided a template. You MUST use it exactly — keep every section heading as-is and fill each section with your researched content. Do not add, remove, or rename sections.
+
+<template>
+{template.strip()}
+</template>
+
+The Sources section (listing all cited sources with title and URL) must always be included at the end, even if not shown in the template."""
+    else:
+        report_format = """## Report Format
+Write the report in Markdown with these sections:
+1. **Executive Summary** (2-3 sentences)
+2. **Key Findings** (bullet points)
+3. **Detailed Analysis** (multiple sections with headings)
+4. **Conclusion**
+5. **Sources** (reference list at the end)"""
+
     return f"""Today's date is {today}.
 
 You are a research agent. The user will give you a research brief describing what they want to know, the angle they care about, and the desired outcome. Your job is to:
@@ -20,13 +39,7 @@ You are a research agent. The user will give you a research brief describing wha
 - Use scrape_page for web articles and pages
 - Call write_report when you have sufficient information (at least 3 sources)
 
-## Report Format
-Write the report in Markdown with these sections:
-1. **Executive Summary** (2-3 sentences)
-2. **Key Findings** (bullet points)
-3. **Detailed Analysis** (multiple sections with headings)
-4. **Conclusion**
-5. **Sources** (reference list at the end)
+{report_format}
 
 ## Citation Rules
 - Each tool call (get_video_metadata, scrape_page) returns a "source_id" field like "[src-42]". Use these EXACT source_id values when citing — do NOT renumber them.

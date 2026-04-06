@@ -245,7 +245,7 @@ def _source_instructions(sources_config: str) -> str:
     }.get(sources_config, "Use all available tools.")
 
 
-async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_refresh: bool, aspect: str | None):
+async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_refresh: bool, aspect: str | None, template: str = ""):
     """Shared Bedrock agent loop. Called by both run_agent and run_agent_refresh."""
     bedrock = get_bedrock_client()
     sources = []
@@ -260,7 +260,7 @@ async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_
         try:
             response = bedrock.converse(
                 modelId=BEDROCK_MODEL,
-                system=[{"text": get_system_prompt()}],
+                system=[{"text": get_system_prompt(template)}],
                 messages=messages,
                 toolConfig={"tools": TOOL_DEFINITIONS},
                 inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
@@ -347,14 +347,14 @@ async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_
         # Check for stop request between iterations
         if await db_is_stop_requested(research_id):
             logger.info(f"[agent] stop requested for research {research_id} — forcing synthesis")
-            await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="stopped")
+            await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="stopped", template=template)
             return
 
     logger.warning(f"[agent] max iterations reached for research {research_id} — forcing final synthesis")
-    await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="max_iterations")
+    await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="max_iterations", template=template)
 
 
-async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, messages: list, sources: list, reason: str):
+async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, messages: list, sources: list, reason: str, template: str = ""):
     """Force a final Bedrock call to write a report from whatever has been gathered."""
     note = "stopped by user" if reason == "stopped" else "max iterations reached"
     prompt = (
@@ -369,7 +369,7 @@ async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, mes
         messages.append({"role": "user", "content": [{"text": prompt}]})
         response = bedrock.converse(
             modelId=BEDROCK_MODEL,
-            system=[{"text": get_system_prompt()}],
+            system=[{"text": get_system_prompt(template)}],
             messages=messages,
             toolConfig={"tools": TOOL_DEFINITIONS},
             inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
@@ -394,16 +394,16 @@ async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, mes
     await db_update_research_status(research_id, "done")
 
 
-async def run_agent(research_id: int, slug: str, brief: str, sources_config: str):
+async def run_agent(research_id: int, slug: str, brief: str, sources_config: str, template: str = ""):
     logger.info(f"[agent] starting research: '{brief}' (id={research_id})")
     await db_clear_stop_flag(research_id)
     await db_update_research_status(research_id, "running")
     src_instr = _source_instructions(sources_config)
     messages = [{"role": "user", "content": [{"text": f"## Research Brief\n\n{brief}\n\n## Sources\n{src_instr}\n\nPlan your searches based on this brief and begin research now."}]}]
-    await _run_loop(research_id, slug, brief, messages, is_refresh=False, aspect=None)
+    await _run_loop(research_id, slug, brief, messages, is_refresh=False, aspect=None, template=template)
 
 
-async def run_agent_refresh(research_id: int, slug: str, brief: str, sources_config: str, aspect: str | None = None):
+async def run_agent_refresh(research_id: int, slug: str, brief: str, sources_config: str, aspect: str | None = None, template: str = ""):
     logger.info(f"[agent] refreshing research: '{brief}' (id={research_id}, aspect={aspect!r})")
 
     # Read previous report
@@ -431,4 +431,4 @@ async def run_agent_refresh(research_id: int, slug: str, brief: str, sources_con
     src_instr = _source_instructions(sources_config)
     user_msg  = get_refresh_user_message(brief, src_instr, previous_report, aspect)
     messages  = [{"role": "user", "content": [{"text": user_msg}]}]
-    await _run_loop(research_id, slug, brief, messages, is_refresh=True, aspect=aspect)
+    await _run_loop(research_id, slug, brief, messages, is_refresh=True, aspect=aspect, template=template)

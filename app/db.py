@@ -63,6 +63,7 @@ async def init_db():
             "ALTER TABLE research ADD COLUMN refresh_aspect TEXT",
             "ALTER TABLE research ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE research RENAME COLUMN topic TO brief",
+            "ALTER TABLE research ADD COLUMN template TEXT",
         ]:
             try:
                 await db.execute(migration)

@@ -36,6 +36,7 @@ class ResearchCreate(BaseModel):
     sources_config: str = "both"   # "web", "youtube", "both"
     parallelism: int = 1
     seed_urls: list[str] = []
+    template: str = ""
 
 
 @router.post("")
@@ -47,8 +48,8 @@ async def create_research(body: ResearchCreate, background_tasks: BackgroundTask
 
     import json as _json
     async with db.execute(
-        "INSERT INTO research (slug, brief, sources_config, parallelism, seed_urls) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        (slug, body.brief, body.sources_config, body.parallelism, _json.dumps(body.seed_urls)),
+        "INSERT INTO research (slug, brief, sources_config, parallelism, seed_urls, template) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        (slug, body.brief, body.sources_config, body.parallelism, _json.dumps(body.seed_urls), body.template),
     ) as cur:
         row = await cur.fetchone()
     await db.commit()
@@ -57,7 +58,7 @@ async def create_research(body: ResearchCreate, background_tasks: BackgroundTask
     init_research_repo(folder, body.brief)
 
     # Start agent in background
-    background_tasks.add_task(run_agent, research_id, slug, body.brief, body.sources_config)
+    background_tasks.add_task(run_agent, research_id, slug, body.brief, body.sources_config, body.template)
 
     return {"id": research_id, "slug": slug, "brief": body.brief, "status": "pending"}
 
@@ -142,7 +143,7 @@ async def stop_research(slug: str, db=Depends(get_db)):
 
 @router.post("/{slug}/refresh")
 async def refresh_research(slug: str, body: RefreshRequest, background_tasks: BackgroundTasks, db=Depends(get_db)):
-    async with db.execute("SELECT id, brief, sources_config, status FROM research WHERE slug = ?", (slug,)) as cur:
+    async with db.execute("SELECT id, brief, sources_config, status, template FROM research WHERE slug = ?", (slug,)) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(404, "Research not found")
@@ -158,7 +159,7 @@ async def refresh_research(slug: str, body: RefreshRequest, background_tasks: Ba
 
     background_tasks.add_task(
         run_agent_refresh,
-        row["id"], slug, row["brief"], row["sources_config"], aspect,
+        row["id"], slug, row["brief"], row["sources_config"], aspect, row["template"] or "",
     )
     return {"slug": slug, "status": "pending", "aspect": aspect}
 

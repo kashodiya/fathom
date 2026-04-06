@@ -157,6 +157,23 @@ const NewResearchView = {
         </v-col>
       </v-row>
 
+      <v-expansion-panels variant="accordion" class="mb-3">
+        <v-expansion-panel>
+          <v-expansion-panel-title>
+            <span>Report Template <span v-if="form.template.trim()" class="text-caption text-primary ml-2">(set)</span></span>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+            <p class="text-caption text-grey mb-2">Paste a Markdown template or upload a .md file. The agent will fill in each section with researched content.</p>
+            <div class="d-flex align-center mb-2">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-upload" @click="$refs.templateFile.click()">Upload .md</v-btn>
+              <input ref="templateFile" type="file" accept=".md,text/markdown,text/plain" style="display:none" @change="loadTemplateFile"/>
+              <v-btn v-if="form.template.trim()" size="small" variant="text" color="error" class="ml-2" @click="form.template=''">Clear</v-btn>
+            </div>
+            <v-textarea v-model="form.template" placeholder="## Section 1&#10;&#10;## Section 2&#10;&#10;## Conclusion" rows="8" variant="outlined" hide-details font-family="monospace"/>
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+      </v-expansion-panels>
+
       <v-alert v-if="error" type="error" class="mb-3">{{ error }}</v-alert>
 
       <v-btn color="primary" :loading="saving" :disabled="!form.brief.trim()" @click="submit" block>
@@ -166,7 +183,7 @@ const NewResearchView = {
   </v-container>`,
   setup() {
     const router = VueRouter.useRouter();
-    const form = ref({ brief:'', sources_config:'both', parallelism:1 });
+    const form = ref({ brief:'', sources_config:'both', parallelism:1, template:'' });
     const seedUrls = ref('');
     const saving = ref(false);
     const error = ref('');
@@ -175,6 +192,15 @@ const NewResearchView = {
       { title:'Web only', value:'web' },
       { title:'YouTube only', value:'youtube' },
     ];
+
+    function loadTemplateFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => { form.value.template = ev.target.result; };
+      reader.readAsText(file);
+      e.target.value = '';
+    }
 
     async function submit() {
       saving.value = true; error.value = '';
@@ -185,7 +211,7 @@ const NewResearchView = {
       router.push('/research/' + res.slug);
     }
 
-    return { form, seedUrls, saving, error, sourceOptions, submit };
+    return { form, seedUrls, saving, error, sourceOptions, loadTemplateFile, submit };
   }
 };
 
