@@ -16,7 +16,7 @@ from app.db import DB_PATH
 
 logger = logging.getLogger(__name__)
 
-BEDROCK_MODEL = "us.anthropic.claude-sonnet-4-6"
+BEDROCK_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 MAX_SEARCH_ROUNDS = 3
 JOB_POLL_INTERVAL = 3   # seconds between DB polls
 JOB_TIMEOUT = 180       # seconds before giving up on a job
@@ -236,7 +236,7 @@ def get_bedrock_client():
     return boto3.client(
         "bedrock-runtime",
         region_name="us-east-1",
-        config=Config(read_timeout=120, connect_timeout=10),
+        config=Config(read_timeout=300, connect_timeout=10),
     )
 
 
@@ -262,14 +262,24 @@ async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_
         logger.info(f"[agent] iteration {iteration} — calling Bedrock")
 
         bedrock_job_id = await db_create_job(research_id, "bedrock_call", {"model": BEDROCK_MODEL, "iteration": iteration})
+        await db_update_job(bedrock_job_id, "running")
         try:
-            response = bedrock.converse(
-                modelId=BEDROCK_MODEL,
-                system=[{"text": get_system_prompt(template)}],
-                messages=messages,
-                toolConfig={"tools": TOOL_DEFINITIONS},
-                inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
+            loop = asyncio.get_event_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: bedrock.converse(
+                    modelId=BEDROCK_MODEL,
+                    system=[{"text": get_system_prompt(template)}],
+                    messages=messages,
+                    toolConfig={"tools": TOOL_DEFINITIONS},
+                    inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
+                )),
+                timeout=180,
             )
+        except asyncio.TimeoutError:
+            logger.error(f"[agent] Bedrock timeout after 180s on iteration {iteration}")
+            await db_update_job(bedrock_job_id, "failed", {"error": "timeout"})
+            await db_update_research_status(research_id, "failed")
+            return
         except Exception as e:
             logger.error(f"[agent] Bedrock error: {e}")
             await db_update_job(bedrock_job_id, "failed", {"error": str(e)})

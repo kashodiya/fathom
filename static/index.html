@@ -317,6 +317,9 @@ const ResearchView = {
                     <a :href="src.url" target="_blank" class="text-decoration-none">{{ src.title || src.url }}</a>
                   </v-list-item-title>
                   <v-list-item-subtitle class="text-caption">{{ src.scraped_at }}</v-list-item-subtitle>
+                  <template #append>
+                    <span class="text-caption text-grey">{{ sourceDuration(src) }}</span>
+                  </template>
                 </v-list-item>
               </v-list>
             </v-window-item>
@@ -485,6 +488,22 @@ const ResearchView = {
       return '';
     }
 
+    const sourceJobMap = computed(() => {
+      const map = {};
+      for (const job of jobs.value) {
+        if ((job.type === 'scrape_page' || job.type === 'get_video_metadata') && job.payload?.url) {
+          map[job.payload.url] = job;
+        }
+      }
+      return map;
+    });
+
+    function sourceDuration(src) {
+      const job = sourceJobMap.value[src.url];
+      if (!job) return '';
+      return jobDuration(job);
+    }
+
     const jobStats = computed(() => {
       const map = {};
       for (const job of jobs.value) {
@@ -567,7 +586,7 @@ ${rendered}
     onUnmounted(() => clearInterval(timer));
 
     return { research, jobs, sources, history, tab, renderedReport,
-      statusColor, jobInfo, jobLabel, formatDate, formatSecs, jobDuration, jobStats,
+      statusColor, jobInfo, jobLabel, formatDate, formatSecs, jobDuration, jobStats, sourceDuration,
       stopping, stopResearch,
       refreshDialog, refreshAspect, refreshing, doRefresh,
       viewDiff,
