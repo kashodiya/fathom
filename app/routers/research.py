@@ -43,8 +43,14 @@ class ResearchCreate(BaseModel):
 async def create_research(body: ResearchCreate, background_tasks: BackgroundTasks, db=Depends(get_db)):
     slug = slugify(body.brief)
     folder = os.path.join(RESEARCH_DIR, slug)
-    if os.path.exists(folder):
+    async with db.execute("SELECT id FROM research WHERE slug = ?", (slug,)) as cur:
+        existing = await cur.fetchone()
+    if existing:
         raise HTTPException(400, f"Research '{slug}' already exists")
+    # Clean up stale folder left by a failed previous deletion
+    if os.path.exists(folder):
+        import shutil
+        shutil.rmtree(folder)
 
     import json as _json
     async with db.execute(
@@ -315,9 +321,12 @@ async def delete_research(slug: str, db=Depends(get_db)):
     await db.execute("DELETE FROM research WHERE id = ?", (research_id,))
     await db.commit()
 
-    import shutil
+    import shutil, stat
     folder = os.path.join(RESEARCH_DIR, slug)
     if os.path.exists(folder):
-        shutil.rmtree(folder)
+        def _handle_readonly(func, path, exc_info):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        shutil.rmtree(folder, onerror=_handle_readonly)
 
     return {"deleted": slug}

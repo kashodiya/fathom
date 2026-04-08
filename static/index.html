@@ -581,8 +581,8 @@ ${rendered}
 
     async function deleteResearch() {
       if (!confirm('Delete this research and all its data?')) return;
-      await api.delete(`/research/${slug}`);
-      router.push('/');
+      try { await api.delete(`/research/${slug}`); } catch (e) { console.error('Delete error:', e); }
+      window.location.href = '/#/';
     }
 
     onMounted(() => { load(); loadHistory(); timer = setInterval(load, 3000); });
