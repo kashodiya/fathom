@@ -6,6 +6,20 @@ let isProcessing = false;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const randDelay = (min, max) => sleep(min + Math.random() * (max - min));
 
+function jobExtra(type, result) {
+  if (!result) return '';
+  switch (type) {
+    case 'search_google':  return `Found ${result.results?.length ?? 0} results`;
+    case 'search_youtube': return `Found ${result.results?.length ?? 0} videos`;
+    case 'get_video_metadata': return result.title ? `Title: ${result.title}` : '';
+    case 'get_transcript': {
+      const chars = (result.segments || []).reduce((n, s) => n + (s.text?.length || 0), 0);
+      return `Got transcript of ${chars.toLocaleString()} chars (${result.segments?.length ?? 0} segments)`;
+    }
+    default: return '';
+  }
+}
+
 // ── Boot: start polling via alarms ────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create("poll", { periodInMinutes: 0.1 }); // ~6s
@@ -36,14 +50,16 @@ async function poll() {
   if (!job) return;
 
   isProcessing = true;
-  console.log(`[agent] picked up job ${job.id} (${job.type})`, job.payload);
+  const jobLabel = job.payload?.query || job.payload?.url || '';
+  console.log(`[agent] picked up job ${job.id} (${job.type}) — ${jobLabel}`);
 
   try {
     const result = await executeJob(job);
     await postResult(job.id, "done", result);
-    console.log(`[agent] job ${job.id} done`, result);
+    const extra = jobExtra(job.type, result);
+    console.log(`[agent] job ${job.id} done (${job.type}) — ${jobLabel}${extra ? ' — ' + extra : ''}`);
   } catch (e) {
-    console.error(`[agent] job ${job.id} failed:`, e.message);
+    console.error(`[agent] job ${job.id} failed (${jobLabel}):`, e.message);
     await postResult(job.id, "failed", { error: e.message });
   } finally {
     // Random pause after each job before accepting the next (3–8s)

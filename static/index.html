@@ -55,11 +55,41 @@ const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
 const { createVuetify }  = Vuetify;
 const { createRouter, createWebHashHistory } = VueRouter;
 
+// ── Logging ───────────────────────────────────────────────────────────────────
+const log = {
+  api(method, url, body, res, ms) {
+    const ok = res && !res.detail;
+    const label = `[API] ${method} ${url} (${ms}ms)`;
+    if (!ok && res?.detail) {
+      console.warn(`%c${label} → ERROR: ${res.detail}`, 'color:#f44336;font-weight:bold');
+    } else if (body) {
+      console.groupCollapsed(`%c${label}`, 'color:#2196F3;font-weight:bold');
+      console.log('→ request:', body);
+      console.groupEnd();
+    } else {
+      // Plain GETs are verbose — use debug so they're hidden unless Verbose is on
+      console.debug(label);
+    }
+  },
+  nav(from, to)  { console.log(`%c[NAV] ${from} → ${to}`, 'color:#9C27B0;font-weight:bold'); },
+  info(msg, data){ data !== undefined ? console.log(`%c[APP] ${msg}`, 'color:#4CAF50', data) : console.log(`%c[APP] ${msg}`, 'color:#4CAF50'); },
+  warn(msg, data){ data !== undefined ? console.warn(`[APP] ${msg}`, data) : console.warn(`[APP] ${msg}`); },
+};
+
 // ── API helpers ───────────────────────────────────────────────────────────────
+async function _apiFetch(method, url, body) {
+  const t0 = Date.now();
+  const opts = { method, headers: body ? {'Content-Type':'application/json'} : {} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  const res = await r.json();
+  log.api(method, url, body, res, Date.now() - t0);
+  return res;
+}
 const api = {
-  get:    (url)      => fetch(url).then(r => r.json()),
-  post:   (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r => r.json()),
-  delete: (url)      => fetch(url, { method:'DELETE' }).then(r => r.json()),
+  get:    (url)       => _apiFetch('GET',    url),
+  post:   (url, body) => _apiFetch('POST',   url, body),
+  delete: (url)       => _apiFetch('DELETE', url),
 };
 
 // ── Job helpers ───────────────────────────────────────────────────────────────
@@ -206,8 +236,11 @@ const NewResearchView = {
       saving.value = true; error.value = '';
       const seeds = seedUrls.value.split('\n').map(u=>u.trim()).filter(Boolean);
       const body = { ...form.value, seed_urls: seeds };
+      log.info('Creating research', { brief: body.brief, sources: body.sources_config });
       const res = await api.post('/research', body);
       if (res.detail) { error.value = res.detail; saving.value = false; return; }
+      log.info(`Research created: ${res.slug} (id=${res.id})`);
+      log.nav('/new', '/research/' + res.slug);
       router.push('/research/' + res.slug);
     }
 
@@ -419,9 +452,11 @@ const ResearchView = {
     // Stop
     const stopping = ref(false);
     async function stopResearch() {
+      log.info(`Stopping research: ${slug}`);
       stopping.value = true;
       await api.post(`/research/${slug}/stop`, {});
       stopping.value = false;
+      log.info(`Stop requested for: ${slug}`);
     }
 
     // Refresh
@@ -529,12 +564,16 @@ const ResearchView = {
         api.get(`/research/${slug}/jobs`),
         api.get(`/research/${slug}/sources`),
       ]);
+      const prevStatus = research.value.status;
       research.value = r;
       jobs.value     = j;
       sources.value  = s;
+      if (r.status && r.status !== prevStatus)
+        log.info(`Research status: ${prevStatus || '?'} → ${r.status} | jobs=${j.length} sources=${s.length}`);
       if (s.length && !autoSwitched) { tab.value = 'sources'; autoSwitched = true; }
       if (r.status === 'done' || r.status === 'failed') {
         clearInterval(timer);
+        log.info(`Polling stopped (status=${r.status})`);
         loadHistory();
       }
     }
@@ -544,12 +583,14 @@ const ResearchView = {
     }
 
     async function doRefresh() {
+      log.info(`Refreshing research: ${slug}`, { aspect: refreshAspect.value || 'full' });
       refreshing.value = true;
       await api.post(`/research/${slug}/refresh`, { aspect: refreshAspect.value });
       refreshDialog.value = false;
       refreshAspect.value = '';
       refreshing.value    = false;
       tab.value = 'activity';
+      log.info('Refresh kicked off, restarting poll');
       // restart polling
       clearInterval(timer);
       timer = setInterval(load, 3000);
@@ -581,12 +622,20 @@ ${rendered}
 
     async function deleteResearch() {
       if (!confirm('Delete this research and all its data?')) return;
-      try { await api.delete(`/research/${slug}`); } catch (e) { console.error('Delete error:', e); }
+      log.info(`Deleting research: ${slug}`);
+      try { await api.delete(`/research/${slug}`); } catch (e) { log.warn('Delete request error', e); }
+      log.nav(`/research/${slug}`, '/');
       window.location.href = '/#/';
     }
 
-    onMounted(() => { load(); loadHistory(); timer = setInterval(load, 3000); });
-    onUnmounted(() => clearInterval(timer));
+    onMounted(() => {
+      log.info(`ResearchView mounted: ${slug}`);
+      load(); loadHistory(); timer = setInterval(load, 3000);
+    });
+    onUnmounted(() => {
+      log.info(`ResearchView unmounted: ${slug}`);
+      clearInterval(timer);
+    });
 
     return { research, jobs, sources, history, tab, renderedReport,
       statusColor, jobInfo, jobLabel, formatDate, formatSecs, jobDuration, jobStats, sourceDuration,
@@ -605,6 +654,9 @@ const router = createRouter({
     { path:'/new',             component: NewResearchView },
     { path:'/research/:slug',  component: ResearchView },
   ]
+});
+router.afterEach((to, from) => {
+  if (from.path !== to.path) log.nav(from.path, to.path);
 });
 
 const vuetify = createVuetify({ theme:{ defaultTheme:'light' } });

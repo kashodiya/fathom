@@ -6,3 +6,4 @@ crawl4ai
 boto3
 weasyprint
 python-multipart
+markdown
