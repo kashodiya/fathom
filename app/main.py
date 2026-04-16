@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from app.db import init_db
 from app.routers import research, jobs
+from app.config import validate_config, LLM_PROVIDER, get_model_id
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 os.makedirs("logs", exist_ok=True)
@@ -32,7 +33,15 @@ logger = logging.getLogger(__name__)
 # ── Lifespan ─────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up — initialising DB")
+    logger.info("Starting up — validating config")
+    try:
+        validate_config()
+        logger.info(f"LLM Provider: {LLM_PROVIDER} | Model: {get_model_id()}")
+    except ValueError as e:
+        logger.error(f"Configuration error: {e}")
+        raise
+
+    logger.info("Initialising DB")
     await init_db()
     yield
     logger.info("Shutting down")

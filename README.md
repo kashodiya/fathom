@@ -52,38 +52,84 @@ User ← Report ← FastAPI ← Markdown + Sources ←────────�
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) — modern Python package manager (install with `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Google Chrome with the Fathom extension installed
-- AWS credentials with Bedrock access (Claude Sonnet 4.6 in `us-east-1`)
+- **LLM Provider** (one of):
+  - AWS credentials with Bedrock access (Claude Sonnet/Haiku 4.x in `us-east-1`)
+  - OR Anthropic API key
+  - OR OpenAI API key
+  - OR any OpenAI-compatible API endpoint
 - crawl4ai installed and Playwright browsers set up
 
 ## Setup
 
 **1. Install Python dependencies**
 ```bash
-pip install -r requirements.txt
-playwright install
+uv sync
+uv run playwright install
 ```
 
-**2. Install the Chrome extension**
+**2. Configure LLM provider**
+
+Copy the example config and edit:
+```bash
+cp .env.example .env
+```
+
+Choose your LLM provider by editing `.env`:
+
+**Option A: AWS Bedrock (default)**
+```bash
+LLM_PROVIDER=bedrock
+AWS_REGION=us-east-1
+LLM_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+```
+
+**Option B: Anthropic API**
+```bash
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.anthropic.com/v1
+LLM_API_KEY=your_anthropic_api_key
+LLM_MODEL_ID=claude-sonnet-4-20250514
+```
+
+**Option C: OpenAI**
+```bash
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=your_openai_api_key
+LLM_MODEL_ID=gpt-4o
+```
+
+**Option D: Local LLM (Ollama, etc.)**
+```bash
+LLM_PROVIDER=openai
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=dummy
+LLM_MODEL_ID=llama3.2
+```
+
+**3. Install the Chrome extension**
 
 - Open Chrome and go to `chrome://extensions`
 - Enable **Developer mode**
 - Click **Load unpacked** and select the `extension/` folder
 
-**3. Start the server**
+**4. Start the server**
 ```bash
-start.bat
+./start.sh    # Linux/Mac
+start.bat     # Windows
 ```
 
 Or directly:
 ```bash
-uvicorn app.main:app --reload --reload-exclude research --reload-exclude logs
+uv run uvicorn app.main:app --reload --reload-exclude research --reload-exclude logs
 ```
 
-**4. Open the app**
+**5. Open the app**
 
-Go to `http://localhost:8000` in Chrome (must be Chrome — the extension only runs there).
+Go to `http://localhost:9092` in Chrome (must be Chrome — the extension only runs there).
 
 ## Usage
 
@@ -102,11 +148,22 @@ The `research/` folder is local-only (excluded from Git). Each project gets its 
 
 To share research on GitHub, move it to `research-public/` which is tracked.
 
-## AWS Setup
+## LLM Provider Setup
 
+### AWS Bedrock
 Fathom uses the AWS SDK with no hardcoded credentials. It works with:
 - IAM roles (e.g. on EC2)
 - AWS CLI configured credentials (`aws configure`)
 - Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
 
-Bedrock model access for **Claude Sonnet 4.6** must be enabled in the `us-east-1` region.
+Bedrock model access for **Claude models** must be enabled in the `us-east-1` region.
+
+### Anthropic/OpenAI API
+Set your API key in `.env`:
+```bash
+LLM_PROVIDER=openai
+LLM_API_KEY=your_api_key
+```
+
+### Local LLM
+Run a local LLM server (e.g., Ollama) with OpenAI-compatible API and configure the endpoint in `.env`.

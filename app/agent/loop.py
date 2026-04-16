@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import aiosqlite
-import boto3
 import git
 
 from datetime import date
@@ -13,13 +12,10 @@ from app.agent.prompts import get_system_prompt, get_refresh_user_message
 from app.agent.tools import TOOL_DEFINITIONS
 from app.scraper import scrape_page
 from app.db import DB_PATH
+from app.llm_client import get_llm_client
+from app.config import get_model_id, JOB_POLL_INTERVAL, JOB_TIMEOUT
 
 logger = logging.getLogger(__name__)
-
-BEDROCK_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-MAX_SEARCH_ROUNDS = 3
-JOB_POLL_INTERVAL = 3   # seconds between DB polls
-JOB_TIMEOUT = 180       # seconds before giving up on a job
 
 RESEARCH_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "research")
 
@@ -229,15 +225,8 @@ async def execute_tool(name: str, inputs: dict, research_id: int, slug: str, sou
     return json.dumps({"error": f"unknown tool: {name}"})
 
 
-# ── Bedrock client ────────────────────────────────────────────────────────────
-
-def get_bedrock_client():
-    from botocore.config import Config
-    return boto3.client(
-        "bedrock-runtime",
-        region_name="us-east-1",
-        config=Config(read_timeout=300, connect_timeout=10),
-    )
+# ── LLM client ────────────────────────────────────────────────────────────────
+# (Moved to app/llm_client.py)
 
 
 # ── Main agent loop ───────────────────────────────────────────────────────────
@@ -251,38 +240,39 @@ def _source_instructions(sources_config: str) -> str:
 
 
 async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_refresh: bool, aspect: str | None, template: str = ""):
-    """Shared Bedrock agent loop. Called by both run_agent and run_agent_refresh."""
-    bedrock = get_bedrock_client()
+    """Shared LLM agent loop. Called by both run_agent and run_agent_refresh."""
+    llm_client = get_llm_client()
+    model_id = get_model_id()
     sources = []
     max_iterations = 20
     iteration = 0
 
     while iteration < max_iterations:
         iteration += 1
-        logger.info(f"[agent] iteration {iteration} — calling Bedrock")
+        logger.info(f"[agent] iteration {iteration} — calling LLM ({model_id})")
 
-        bedrock_job_id = await db_create_job(research_id, "bedrock_call", {"model": BEDROCK_MODEL, "iteration": iteration})
-        await db_update_job(bedrock_job_id, "running")
+        llm_job_id = await db_create_job(research_id, "bedrock_call", {"model": model_id, "iteration": iteration})
+        await db_update_job(llm_job_id, "running")
         try:
             loop = asyncio.get_event_loop()
             response = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: bedrock.converse(
-                    modelId=BEDROCK_MODEL,
+                loop.run_in_executor(None, lambda: llm_client.converse(
                     system=[{"text": get_system_prompt(template)}],
                     messages=messages,
-                    toolConfig={"tools": TOOL_DEFINITIONS},
-                    inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
+                    tools=TOOL_DEFINITIONS,
+                    max_tokens=8192,
+                    temperature=0.3,
                 )),
                 timeout=180,
             )
         except asyncio.TimeoutError:
-            logger.error(f"[agent] Bedrock timeout after 180s on iteration {iteration}")
-            await db_update_job(bedrock_job_id, "failed", {"error": "timeout"})
+            logger.error(f"[agent] LLM timeout after 180s on iteration {iteration}")
+            await db_update_job(llm_job_id, "failed", {"error": "timeout"})
             await db_update_research_status(research_id, "failed")
             return
         except Exception as e:
-            logger.error(f"[agent] Bedrock error: {e}")
-            await db_update_job(bedrock_job_id, "failed", {"error": str(e)})
+            logger.error(f"[agent] LLM error: {e}")
+            await db_update_job(llm_job_id, "failed", {"error": str(e)})
             await db_update_research_status(research_id, "failed")
             return
 
@@ -291,7 +281,7 @@ async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_
         stop_reason = response["stopReason"]
 
         tool_use_blocks = [b["toolUse"] for b in output_message["content"] if "toolUse" in b]
-        await db_update_job(bedrock_job_id, "done", {"stop_reason": stop_reason, "tool_calls": [b["name"] for b in tool_use_blocks]})
+        await db_update_job(llm_job_id, "done", {"stop_reason": stop_reason, "tool_calls": [b["name"] for b in tool_use_blocks]})
         logger.info(f"[agent] stop_reason={stop_reason}, tool_calls={[b['name'] for b in tool_use_blocks]}")
 
         if stop_reason == "end_turn":
@@ -362,15 +352,16 @@ async def _run_loop(research_id: int, slug: str, brief: str, messages: list, is_
         # Check for stop request between iterations
         if await db_is_stop_requested(research_id):
             logger.info(f"[agent] stop requested for research {research_id} — forcing synthesis")
-            await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="stopped", template=template)
+            await _force_synthesis(llm_client, research_id, slug, brief, messages, sources, reason="stopped", template=template)
             return
 
     logger.warning(f"[agent] max iterations reached for research {research_id} — forcing final synthesis")
-    await _force_synthesis(bedrock, research_id, slug, brief, messages, sources, reason="max_iterations", template=template)
+    await _force_synthesis(llm_client, research_id, slug, brief, messages, sources, reason="max_iterations", template=template)
 
 
-async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, messages: list, sources: list, reason: str, template: str = ""):
-    """Force a final Bedrock call to write a report from whatever has been gathered."""
+async def _force_synthesis(llm_client, research_id: int, slug: str, brief: str, messages: list, sources: list, reason: str, template: str = ""):
+    """Force a final LLM call to write a report from whatever has been gathered."""
+    model_id = get_model_id()
     note = "stopped by user" if reason == "stopped" else "max iterations reached"
     prompt = (
         "The user has requested to stop research early. Using all the information you have gathered so far, "
@@ -379,18 +370,18 @@ async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, mes
         "You have reached the maximum number of research iterations. Using all the information you have gathered so far, "
         "call write_report now to produce the best possible report. Do not search for more information."
     )
-    bedrock_job_id = await db_create_job(research_id, "bedrock_call", {"model": BEDROCK_MODEL, "iteration": reason})
+    llm_job_id = await db_create_job(research_id, "bedrock_call", {"model": model_id, "iteration": reason})
     try:
         messages.append({"role": "user", "content": [{"text": prompt}]})
-        response = bedrock.converse(
-            modelId=BEDROCK_MODEL,
+        response = llm_client.converse(
             system=[{"text": get_system_prompt(template)}],
             messages=messages,
-            toolConfig={"tools": TOOL_DEFINITIONS},
-            inferenceConfig={"maxTokens": 8192, "temperature": 0.3},
+            tools=TOOL_DEFINITIONS,
+            max_tokens=8192,
+            temperature=0.3,
         )
         output_message = response["output"]["message"]
-        await db_update_job(bedrock_job_id, "done", {"stop_reason": response["stopReason"], "note": note})
+        await db_update_job(llm_job_id, "done", {"stop_reason": response["stopReason"], "note": note})
         for block in output_message["content"]:
             if "toolUse" in block and block["toolUse"]["name"] == "write_report":
                 write_report_file(slug, block["toolUse"]["input"].get("content", ""))
@@ -405,7 +396,7 @@ async def _force_synthesis(bedrock, research_id: int, slug: str, brief: str, mes
                 logger.info("[agent] fallback text report written")
     except Exception as e:
         logger.error(f"[agent] forced synthesis error: {e}")
-        await db_update_job(bedrock_job_id, "failed", {"error": str(e)})
+        await db_update_job(llm_job_id, "failed", {"error": str(e)})
     await db_update_research_status(research_id, "done")
 
 
